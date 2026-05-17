@@ -1,0 +1,1297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TurfCutter</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #f0f2f0;
+           display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+    /* ── Header ── */
+    header { background: #2d6a4f; color: #fff; padding: 0.55rem 1.4rem;
+             display: flex; align-items: baseline; gap: 1rem; flex-shrink: 0; }
+    header h1 { font-size: 1.1rem; letter-spacing: -0.3px; }
+    header span { font-size: 0.78rem; opacity: 0.75; }
+
+    /* ── Step tabs ── */
+    .step-nav { display: flex; background: #fff; border-bottom: 2px solid #ddd; flex-shrink: 0; }
+    .step-tab {
+      flex: 1; padding: 0.75rem 0.5rem; border: none; background: transparent;
+      cursor: pointer; font-family: inherit; font-size: 0.88rem; font-weight: 600;
+      color: #aaa; border-bottom: 3px solid transparent; margin-bottom: -2px;
+      display: flex; flex-direction: column; align-items: center; gap: 0.2rem;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .step-tab .tab-num {
+      width: 24px; height: 24px; border-radius: 50%; background: #e0e0e0; color: #999;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.75rem; font-weight: 700; transition: background 0.15s, color 0.15s;
+    }
+    .step-tab:not(.locked):hover { color: #2d6a4f; }
+    .step-tab:not(.locked):hover .tab-num { background: #c8e6d8; color: #2d6a4f; }
+    .step-tab.active { color: #2d6a4f; border-bottom-color: #2d6a4f; }
+    .step-tab.active .tab-num { background: #2d6a4f; color: #fff; }
+    .step-tab.locked { cursor: default; opacity: 0.42; }
+    .step-tab.done:not(.active) { color: #555; }
+    .step-tab.done:not(.active) .tab-num { background: #2d6a4f; color: #fff; }
+
+    /* ── Tab panels ── */
+    .tab-panel { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+    .tab-panel.active { display: flex; }
+
+    /* ── Upload panel ── */
+    #panel-upload { align-items: center; justify-content: center; background: #f5f7f5; }
+    .upload-zone {
+      border: 3px dashed #b8d8c8; border-radius: 14px; padding: 2.8rem 2.5rem;
+      text-align: center; background: #fff; cursor: pointer; max-width: 500px; width: 90%;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .upload-zone:hover, .upload-zone.drag-over { border-color: #2d6a4f; background: #f0f7f4; }
+    .upload-icon { font-size: 2.8rem; margin-bottom: 0.6rem; }
+    .upload-zone h2 { font-size: 1.25rem; color: #222; margin-bottom: 0.35rem; }
+    .upload-zone p { font-size: 0.85rem; color: #777; margin-bottom: 1.1rem; line-height: 1.5; }
+    .upload-btn-label {
+      display: inline-block; padding: 0.55rem 1.5rem;
+      background: #2d6a4f; color: #fff; border-radius: 5px;
+      font-size: 0.9rem; font-weight: 600; cursor: pointer;
+    }
+    .upload-btn-label:hover { filter: brightness(1.1); }
+    #file-input { display: none; }
+    #upload-status { margin-top: 0.9rem; font-size: 0.83rem; color: #555; min-height: 1.2rem; }
+
+    /* ── Map section (panels 2-4 share this structure) ── */
+    #panel-map { flex-direction: column; }
+
+    /* Status bar */
+    #status-bar { background: #fff; padding: 0.32rem 1.2rem; border-bottom: 1px solid #eee;
+                  font-size: 0.79rem; color: #666; flex-shrink: 0; min-height: 1.6rem; }
+
+    /* Progress strip (check tab) */
+    #strip-check { background: #fff; border-bottom: 1px solid #eee; flex-shrink: 0; }
+    #progress-wrap { padding: 0.4rem 1.2rem; }
+    #progress-label { font-size: 0.77rem; color: #555; margin-bottom: 0.18rem; }
+    #progress-track { background: #e5e5e5; border-radius: 4px; height: 5px; }
+    #progress-fill { background: #2d6a4f; height: 5px; border-radius: 4px; width: 0; transition: width 0.15s; }
+
+    /* Context bars (walking / driving) */
+    .context-bar {
+      background: #f0f7f4; padding: 0.55rem 1.2rem; border-bottom: 1px solid #c8ddd2;
+      display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap; flex-shrink: 0;
+    }
+    .draw-mode-toggle { display: flex; border: 1px solid #ccc; border-radius: 5px; overflow: hidden; flex-shrink: 0; }
+    .toggle-btn { padding: 0.26rem 0.65rem; border: none; cursor: pointer; font-size: 0.78rem;
+                  font-weight: 600; background: #fff; color: #555; transition: background 0.12s, color 0.12s; }
+    .toggle-btn + .toggle-btn { border-left: 1px solid #ccc; }
+    .toggle-btn.active { background: #2d6a4f; color: #fff; }
+    .ctx-label { font-size: 0.74rem; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: 0.4px; }
+    .ctx-number { width: 62px; padding: 0.26rem 0.38rem; border: 1px solid #ccc; border-radius: 4px; font-size: 0.86rem; }
+    .ctx-run-btn { background: #2d6a4f; color: #fff; border: none; padding: 0.32rem 1rem;
+                   border-radius: 4px; cursor: pointer; font-size: 0.83rem; font-weight: 600; }
+    .ctx-run-btn:disabled { background: #aaa; cursor: default; }
+    .ctx-run-btn:not(:disabled):hover { filter: brightness(1.1); }
+
+    /* Manual turf pills in context bar */
+    #wmanual-list, #dmanual-list { display: flex; gap: 0.45rem; flex-wrap: wrap; align-items: center; }
+    .mtp {
+      display: flex; align-items: center; gap: 0.3rem;
+      border: 1px solid #ddd; border-radius: 20px; padding: 0.18rem 0.55rem 0.18rem 0.38rem;
+      background: #fff;
+    }
+    .mtp-swatch { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .mtp-name { font-size: 0.76rem; font-weight: 600; color: #333; border: none; background: transparent;
+                width: 75px; font-family: inherit; }
+    .mtp-name:focus { outline: 1px solid #2d6a4f; border-radius: 2px; }
+    .mtp-count { font-size: 0.68rem; color: #999; }
+    .mtp-draw { font-size: 0.7rem; padding: 1px 6px; border-radius: 3px; border: 1px solid #2d6a4f;
+                color: #2d6a4f; background: #fff; cursor: pointer; font-weight: 600; }
+    .mtp-draw:hover, .mtp-draw.active { background: #2d6a4f; color: #fff; }
+    .mtp-del { font-size: 0.7rem; padding: 1px 5px; border-radius: 3px;
+               border: 1px solid #e63946; color: #e63946; background: #fff; cursor: pointer; }
+    .mtp-del:hover { background: #fff0f0; }
+    .manual-add-btn { padding: 0.26rem 0.7rem; background: #2d6a4f; color: #fff; border: none;
+                      border-radius: 4px; cursor: pointer; font-size: 0.76rem; font-weight: 600; }
+    .manual-add-btn:hover { filter: brightness(1.1); }
+    .manual-finalize-btn { padding: 0.26rem 0.7rem; background: #e9a319; color: #fff; border: none;
+                           border-radius: 4px; cursor: pointer; font-size: 0.76rem; font-weight: 600; }
+    .manual-finalize-btn:hover { filter: brightness(1.1); }
+    .unassigned-lbl { font-size: 0.75rem; color: #888; }
+
+    /* Draw instruction */
+    #draw-instruction {
+      display: none; background: #e8f4fd; padding: 0.38rem 1.2rem;
+      border-bottom: 1px solid #b8d4e8; font-size: 0.81rem; color: #1a4a6b;
+      align-items: center; gap: 0.8rem; flex-shrink: 0;
+    }
+    #draw-instruction button { padding: 2px 8px; font-size: 0.76rem; cursor: pointer;
+                               border: 1px solid #1a4a6b; border-radius: 3px; background: #fff; color: #1a4a6b; }
+
+    /* Map row */
+    #map-row { flex: 1; display: flex; min-height: 0; }
+    #map { flex: 1; min-width: 0; min-height: 0; }
+
+    /* Check right panel */
+    #check-right {
+      width: 370px; flex-shrink: 0; border-left: 1px solid #ddd;
+      background: #fff; display: flex; flex-direction: column;
+    }
+    .cr-header { padding: 0.55rem 0.85rem; border-bottom: 1px solid #eee; flex-shrink: 0; }
+    .cr-header-title { font-size: 0.86rem; font-weight: 700; color: #222; }
+    .cr-summary { font-size: 0.72rem; color: #777; margin-top: 0.12rem; }
+    #cr-table-wrap { flex: 1; overflow-y: auto; }
+    #cleanup-table { width: 100%; border-collapse: collapse; }
+    #cleanup-table thead th {
+      background: #f7f7f7; padding: 0.28rem 0.45rem; text-align: left;
+      font-size: 0.7rem; font-weight: 600; color: #555; border-bottom: 2px solid #eee;
+      position: sticky; top: 0; z-index: 1;
+    }
+    #cleanup-table td { padding: 0.28rem 0.45rem; border-bottom: 1px solid #f2f2f2; vertical-align: middle; }
+    #cleanup-table tr.row-skipped td { opacity: 0.36; }
+    #cleanup-table tr.row-fail { background: #fff8f8; }
+    #cleanup-table tr.row-highlight td { background: #fffde7; transition: background 1.5s; }
+    .cr-name { font-size: 0.7rem; color: #999; margin-bottom: 1px; white-space: nowrap;
+               overflow: hidden; text-overflow: ellipsis; max-width: 165px; }
+    .cr-addr-input { width: 100%; border: 1px solid transparent; border-radius: 3px;
+                     padding: 2px 3px; font-size: 0.79rem; color: #333; background: transparent; font-family: inherit; }
+    .cr-addr-input:hover { border-color: #ccc; background: #fafafa; }
+    .cr-addr-input:focus { border-color: #2d6a4f; outline: none; background: #fff; }
+    .cr-geocoded { font-size: 0.67rem; color: #bbb; white-space: nowrap; overflow: hidden;
+                   text-overflow: ellipsis; max-width: 165px; margin-top: 1px; }
+    .conf-badge { font-size: 0.66rem; padding: 1px 5px; border-radius: 10px; font-weight: 600;
+                  white-space: nowrap; display: inline-block; }
+    .conf-high   { background: #d4edda; color: #155724; }
+    .conf-med    { background: #fff3cd; color: #856404; }
+    .conf-low    { background: #ffe0c0; color: #7a3e00; }
+    .conf-fail   { background: #f8d7da; color: #721c24; }
+    .conf-spin   { background: #e8e8e8; color: #777; }
+    .conf-manual { background: #d0e8f7; color: #1a4a6b; }
+    .cr-skip-btn { font-size: 0.68rem; padding: 1px 5px; border-radius: 3px; cursor: pointer;
+                   border: 1px solid #ccc; background: #fff; color: #777; white-space: nowrap; }
+    .cr-skip-btn.active { border-color: #e07b39; color: #e07b39; }
+
+    /* Check footer */
+    .cr-footer { border-top: 2px solid #eee; padding: 0.65rem 0.85rem; flex-shrink: 0;
+                 background: #f9f9f9; display: none; flex-direction: column; gap: 0.5rem; }
+    .cr-footer-label { font-size: 0.78rem; font-weight: 700; color: #333; }
+    .cr-ready-btn { padding: 0.42rem 1rem; background: #2d6a4f; color: #fff; border: none;
+                    border-radius: 4px; cursor: pointer; font-size: 0.86rem; font-weight: 600; }
+    .cr-ready-btn:hover { filter: brightness(1.1); }
+
+    /* Export bars */
+    .export-bar { background: #fff; padding: 0.48rem 1.2rem; border-top: 1px solid #ddd;
+                  display: none; align-items: center; gap: 0.65rem; flex-wrap: wrap; flex-shrink: 0; }
+    .export-label { font-size: 0.73rem; font-weight: 600; color: #555;
+                    text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap; }
+    .export-bar input[type="date"] { padding: 0.26rem 0.38rem; border: 1px solid #ccc;
+                                     border-radius: 4px; font-size: 0.82rem; }
+    .export-bar select { padding: 0.26rem 0.38rem; border: 1px solid #ccc; border-radius: 4px; font-size: 0.82rem; }
+    .export-btn { padding: 0.28rem 0.72rem; border: none; border-radius: 4px; cursor: pointer;
+                  font-size: 0.77rem; font-weight: 600; color: #fff; }
+    .export-btn.kml  { background: #457b9d; }
+    .export-btn.xlsx { background: #2a9d8f; }
+    .export-btn.pdf  { background: #e63946; }
+    .export-btn:hover { filter: brightness(1.1); }
+    .export-btn:disabled { background: #aaa !important; cursor: default; filter: none; }
+    .export-divider { width: 1px; height: 20px; background: #ddd; flex-shrink: 0; }
+
+    /* Reassign popup */
+    .reassign-popup { min-width: 155px; font-size: 0.83rem; }
+    .reassign-popup select { margin-top: 5px; width: 100%; font-size: 0.82rem; padding: 2px 3px; }
+    .reassign-popup .rp-label { font-size: 0.71rem; color: #888; display: block; margin-top: 3px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>TurfCutter</h1>
+  <span>Oregon canvassing turf builder</span>
+</header>
+
+<nav class="step-nav">
+  <button class="step-tab active" id="tab-upload" onclick="goTab('upload')">
+    <div class="tab-num">1</div>Upload Addresses
+  </button>
+  <button class="step-tab locked" id="tab-check" onclick="goTab('check')">
+    <div class="tab-num">2</div>Check Addresses
+  </button>
+  <button class="step-tab locked" id="tab-walking" onclick="goTab('walking')">
+    <div class="tab-num">3</div>Door Knocking
+  </button>
+  <button class="step-tab locked" id="tab-driving" onclick="goTab('driving')">
+    <div class="tab-num">4</div>Yard Signs
+  </button>
+</nav>
+
+<!-- Tab 1: Upload -->
+<div class="tab-panel active" id="panel-upload">
+  <div class="upload-zone" id="upload-zone"
+    ondragover="event.preventDefault();this.classList.add('drag-over')"
+    ondragleave="this.classList.remove('drag-over')"
+    ondrop="onFileDrop(event)">
+    <div class="upload-icon">&#128196;</div>
+    <h2>Upload your address list</h2>
+    <p>Drag and drop an Excel (.xlsx) or CSV file here,<br>or click the button to browse.</p>
+    <label class="upload-btn-label" for="file-input">Choose File</label>
+    <input type="file" id="file-input" accept=".xlsx,.xls,.csv" onchange="onFileSelected()">
+    <div id="upload-status"></div>
+  </div>
+</div>
+
+<!-- Tabs 2-4: Shared map section -->
+<div class="tab-panel" id="panel-map">
+
+  <div id="status-bar">Load an address file to begin.</div>
+
+  <!-- Check strip: progress bar (shown on tab 2) -->
+  <div id="strip-check" style="display:none">
+    <div id="progress-wrap" style="display:none">
+      <div id="progress-label">Geocoding…</div>
+      <div id="progress-track"><div id="progress-fill"></div></div>
+    </div>
+  </div>
+
+  <!-- Walking context bar (shown on tab 3) -->
+  <div id="strip-walking" class="context-bar" style="display:none">
+    <div class="draw-mode-toggle">
+      <button class="toggle-btn active" id="wtoggle-auto" onclick="setDrawMode('walking','auto')">Auto</button>
+      <button class="toggle-btn" id="wtoggle-manual" onclick="setDrawMode('walking','manual')">Draw Manually</button>
+    </div>
+    <div id="wauto-opts" style="display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap">
+      <span class="ctx-label">How many turfs?</span>
+      <input type="number" class="ctx-number" id="wturf-count" value="5" min="1" max="30">
+      <button class="ctx-run-btn" id="wrun-btn" onclick="runMode('walking')">Cut Turfs</button>
+    </div>
+    <div id="wmanual-opts" style="display:none;align-items:center;gap:0.6rem;flex-wrap:wrap">
+      <div id="wmanual-list"></div>
+      <button class="manual-add-btn" onclick="addManualTurf('walking')">+ Add Turf</button>
+      <button class="manual-finalize-btn" onclick="finalizeManualTurfs('walking')">&#10003; Finalize</button>
+      <span class="unassigned-lbl" id="wunassigned-count"></span>
+    </div>
+  </div>
+
+  <!-- Driving context bar (shown on tab 4) -->
+  <div id="strip-driving" class="context-bar" style="display:none">
+    <div class="draw-mode-toggle">
+      <button class="toggle-btn active" id="dtoggle-auto" onclick="setDrawMode('driving','auto')">Auto</button>
+      <button class="toggle-btn" id="dtoggle-manual" onclick="setDrawMode('driving','manual')">Draw Manually</button>
+    </div>
+    <div id="dauto-opts" style="display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap">
+      <span class="ctx-label">How many turfs?</span>
+      <input type="number" class="ctx-number" id="dturf-count" value="5" min="1" max="30">
+      <button class="ctx-run-btn" id="drun-btn" onclick="runMode('driving')">Cut Turfs</button>
+    </div>
+    <div id="dmanual-opts" style="display:none;align-items:center;gap:0.6rem;flex-wrap:wrap">
+      <div id="dmanual-list"></div>
+      <button class="manual-add-btn" onclick="addManualTurf('driving')">+ Add Turf</button>
+      <button class="manual-finalize-btn" onclick="finalizeManualTurfs('driving')">&#10003; Finalize</button>
+      <span class="unassigned-lbl" id="dunassigned-count"></span>
+    </div>
+  </div>
+
+  <!-- Draw instruction banner -->
+  <div id="draw-instruction">
+    <span id="draw-instruction-text">Click to place polygon vertices. Double-click to finish.</span>
+    <button onclick="cancelDraw()">Cancel</button>
+  </div>
+
+  <!-- Map + check right panel -->
+  <div id="map-row">
+    <div id="map"></div>
+    <div id="check-right" style="display:none">
+      <div class="cr-header">
+        <div class="cr-header-title">Review Addresses</div>
+        <div class="cr-summary" id="cr-summary">&nbsp;</div>
+      </div>
+      <div id="cr-table-wrap">
+        <table id="cleanup-table">
+          <thead>
+            <tr>
+              <th style="width:22px"></th>
+              <th>Name &amp; Address</th>
+              <th style="width:78px">Match</th>
+              <th style="width:38px">Skip</th>
+            </tr>
+          </thead>
+          <tbody id="cleanup-tbody"></tbody>
+        </table>
+      </div>
+      <div class="cr-footer" id="cr-footer">
+        <div class="cr-footer-label" id="cr-footer-label">&nbsp;</div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+          <button class="cr-ready-btn" style="background:#2d6a4f" onclick="unlockMapping('walking')">&#128694; Door Knocking</button>
+          <button class="cr-ready-btn" style="background:#457b9d" onclick="unlockMapping('driving')">&#128663; Yard Signs</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export bars -->
+  <div class="export-bar" id="export-bar-walking">
+    <span class="export-label">Date:</span>
+    <input type="date" id="wvol-date">
+    <div class="export-divider"></div>
+    <button class="export-btn xlsx" onclick="exportExcel('walking')">Excel (All Turfs)</button>
+    <div class="export-divider"></div>
+    <span class="export-label">Turf:</span>
+    <select id="wturf-select"></select>
+    <button class="export-btn pdf" id="wpdf-btn" onclick="exportPDF('walking')">PDF Map</button>
+    <button class="export-btn kml" onclick="exportKML('walking')">KML</button>
+  </div>
+  <div class="export-bar" id="export-bar-driving">
+    <span class="export-label">Date:</span>
+    <input type="date" id="dvol-date">
+    <div class="export-divider"></div>
+    <button class="export-btn xlsx" onclick="exportExcel('driving')">Excel (All Turfs)</button>
+    <div class="export-divider"></div>
+    <span class="export-label">Turf:</span>
+    <select id="dturf-select"></select>
+    <button class="export-btn pdf" id="dpdf-btn" onclick="exportPDF('driving')">PDF Map</button>
+    <button class="export-btn kml" onclick="exportKML('driving')">KML</button>
+  </div>
+
+</div><!-- #panel-map -->
+
+<script>
+// ── Constants ────────────────────────────────────────────────────────────────
+const COLORS = [
+  '#e63946','#457b9d','#2a9d8f','#e9a319','#9b5de5',
+  '#f4a261','#06d6a0','#ef476f','#118ab2','#80b918'
+];
+const OREGON_CENTER = [44.0, -120.55];
+const GEO_CACHE_KEY = 'turfcutter_v2';
+
+// ── Global state ─────────────────────────────────────────────────────────────
+let parsedRecords = [];
+let cleanupRows   = [];
+let currentTab    = 'upload';
+
+function makeModeState() {
+  return {
+    drawMode: 'auto',
+    geoResults: [], geoAssign: [], numTurfs: 0,
+    turfSequences: [], turfNames: [],
+    osrmMatrix: null,
+    manualTurfs: [], unassigned: [],
+    activeDrawTurfIdx: -1, drawHandler: null,
+    drawnItems: new L.FeatureGroup()
+  };
+}
+const MS = { walking: makeModeState(), driving: makeModeState() };
+
+// ── Map init ─────────────────────────────────────────────────────────────────
+const map = L.map('map', { preferCanvas: false }).setView(OREGON_CENTER, 7);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+  subdomains: 'abcd', maxZoom: 20
+}).addTo(map);
+const markerLayer = L.layerGroup().addTo(map);
+
+map.on('draw:created', function(e) {
+  const mode = currentTab;
+  if (!['walking','driving'].includes(mode)) return;
+  const ms = MS[mode];
+  if (ms.activeDrawTurfIdx < 0) return;
+  const latlngs = e.layer.getLatLngs()[0];
+  const ring = latlngs.map(ll => [ll.lng, ll.lat]);
+  ring.push(ring[0]);
+  assignPolygon(ms, ring, ms.activeDrawTurfIdx);
+  ms.drawHandler = null;
+  ms.activeDrawTurfIdx = -1;
+  document.getElementById('draw-instruction').style.display = 'none';
+  renderManualMarkers(mode);
+  renderManualPanel(mode);
+});
+
+// ── Tab navigation ────────────────────────────────────────────────────────────
+function goTab(tab) {
+  const el = document.getElementById('tab-' + tab);
+  if (el.classList.contains('locked')) return;
+
+  // Cancel any active draw when switching tabs
+  ['walking','driving'].forEach(m => {
+    const ms = MS[m];
+    if (ms.drawHandler) { ms.drawHandler.disable(); ms.drawHandler = null; ms.activeDrawTurfIdx = -1; }
+  });
+  document.getElementById('draw-instruction').style.display = 'none';
+
+  currentTab = tab;
+
+  // Update nav
+  document.querySelectorAll('.step-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+
+  const onUpload = tab === 'upload';
+  document.getElementById('panel-upload').classList.toggle('active', onUpload);
+  document.getElementById('panel-map').classList.toggle('active', !onUpload);
+
+  if (!onUpload) {
+    // Show the right strip
+    document.getElementById('strip-check').style.display   = tab === 'check'   ? 'block' : 'none';
+    document.getElementById('strip-walking').style.display = tab === 'walking'  ? 'flex'  : 'none';
+    document.getElementById('strip-driving').style.display = tab === 'driving'  ? 'flex'  : 'none';
+
+    // Right panel: only on check tab
+    document.getElementById('check-right').style.display = tab === 'check' ? 'flex' : 'none';
+
+    // Export bars
+    const ms = tab === 'walking' || tab === 'driving' ? MS[tab] : null;
+    document.getElementById('export-bar-walking').style.display =
+      (tab === 'walking' && MS.walking.numTurfs > 0) ? 'flex' : 'none';
+    document.getElementById('export-bar-driving').style.display =
+      (tab === 'driving' && MS.driving.numTurfs > 0) ? 'flex' : 'none';
+
+    // Manage drawnItems layers and markers
+    if (tab === 'check') {
+      MS.walking.drawnItems.remove();
+      MS.driving.drawnItems.remove();
+      renderCleanupMarkers();
+    } else if (tab === 'walking') {
+      MS.driving.drawnItems.remove();
+      MS.walking.drawnItems.addTo(map);
+      redrawModeMarkers('walking');
+    } else if (tab === 'driving') {
+      MS.walking.drawnItems.remove();
+      MS.driving.drawnItems.addTo(map);
+      redrawModeMarkers('driving');
+    }
+
+    setTimeout(() => map.invalidateSize(), 50);
+  }
+}
+
+function redrawModeMarkers(mode) {
+  const ms = MS[mode];
+  if (ms.numTurfs > 0) {
+    renderAllMarkers(mode);
+  } else if (ms.drawMode === 'manual' && ms.geoResults.length > 0) {
+    renderManualMarkers(mode);
+  } else {
+    showConfirmedMarkers();
+  }
+}
+
+// ── File upload ───────────────────────────────────────────────────────────────
+function onFileSelected() {
+  const fi = document.getElementById('file-input');
+  if (fi.files.length) loadFile(fi.files[0]);
+}
+function onFileDrop(e) {
+  e.preventDefault();
+  document.getElementById('upload-zone').classList.remove('drag-over');
+  if (e.dataTransfer.files.length) loadFile(e.dataTransfer.files[0]);
+}
+async function loadFile(file) {
+  const statusEl = document.getElementById('upload-status');
+  statusEl.textContent = 'Reading file…';
+  let rows;
+  try { rows = await parseFile(file); }
+  catch (err) { statusEl.textContent = 'Could not read file: ' + err.message; return; }
+  parsedRecords = extractRecords(rows);
+  if (!parsedRecords.length) {
+    statusEl.textContent = 'No addresses found — check that the file has an "Address" column.';
+    return;
+  }
+  statusEl.textContent = `${parsedRecords.length} addresses loaded.`;
+
+  // Reset all mode state
+  cleanupRows = [];
+  ['walking','driving'].forEach(mode => {
+    const ms = MS[mode];
+    ms.geoResults=[]; ms.geoAssign=[]; ms.numTurfs=0;
+    ms.turfSequences=[]; ms.turfNames=[]; ms.osrmMatrix=null;
+    ms.manualTurfs=[]; ms.unassigned=[]; ms.activeDrawTurfIdx=-1;
+    ms.drawnItems.clearLayers();
+  });
+  document.getElementById('cleanup-tbody').innerHTML = '';
+  document.getElementById('cr-footer').style.display = 'none';
+
+  // Lock mapping tabs, unlock check
+  ['walking','driving'].forEach(id => {
+    document.getElementById('tab-' + id).classList.add('locked');
+    document.getElementById('tab-' + id).classList.remove('done');
+  });
+  document.getElementById('tab-upload').classList.add('done');
+  document.getElementById('tab-check').classList.remove('locked');
+
+  goTab('check');
+  setTimeout(() => startCleanup(), 120);
+}
+
+// ── Geocode cache ─────────────────────────────────────────────────────────────
+function loadCache() {
+  try { return JSON.parse(localStorage.getItem(GEO_CACHE_KEY) || '{}'); } catch { return {}; }
+}
+function saveCache(c) { try { localStorage.setItem(GEO_CACHE_KEY, JSON.stringify(c)); } catch {} }
+function geoKey(rec) { return [rec.address, rec.city, rec.zip].filter(Boolean).join('|'); }
+async function geocode(rec, cache) {
+  const key = geoKey(rec);
+  if (cache[key]) return cache[key];
+  const params = new URLSearchParams({
+    street: rec.address, state: 'Oregon', country: 'US',
+    format: 'json', limit: '1', bounded: '1',
+    viewbox: '-124.703,46.292,-116.463,41.992'
+  });
+  if (rec.city) params.set('city', rec.city);
+  if (rec.zip)  params.set('postalcode', rec.zip);
+  try {
+    const r = await fetch('https://nominatim.openstreetmap.org/search?' + params,
+      { headers: { 'Accept-Language': 'en-US,en', 'User-Agent': 'TurfCutter/1.0 (turfcutter-app; contact njohart@gmail.com)' } });
+    const data = await r.json();
+    if (data.length) {
+      const result = { lat: +data[0].lat, lon: +data[0].lon,
+                       displayName: data[0].display_name || '', importance: data[0].importance || 0 };
+      cache[key] = result;
+      return result;
+    }
+  } catch {}
+  return null;
+}
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ── OSRM ─────────────────────────────────────────────────────────────────────
+async function fetchOSRMMatrix(points, profile) {
+  const coords = points.map(p => p.lon + ',' + p.lat).join(';');
+  const url = 'https://router.project-osrm.org/table/v1/' + profile + '/' + coords + '?annotations=duration';
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 25000);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    if (data.code !== 'Ok') throw new Error(data.message || 'OSRM error');
+    return data.durations;
+  } finally { clearTimeout(tid); }
+}
+
+// ── Excel parsing ─────────────────────────────────────────────────────────────
+function parseFile(file) {
+  return new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const wb = XLSX.read(e.target.result, { type: 'array' });
+      res(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' }));
+    };
+    reader.onerror = rej;
+    reader.readAsArrayBuffer(file);
+  });
+}
+function findCol(sample, candidates) {
+  const keys = Object.keys(sample);
+  for (const c of candidates) { const m = keys.find(k => k.trim().toLowerCase() === c.toLowerCase()); if (m) return m; }
+  for (const c of candidates) { const m = keys.find(k => k.trim().toLowerCase().includes(c.toLowerCase())); if (m) return m; }
+  return null;
+}
+function extractRecords(rows) {
+  if (!rows.length) return [];
+  const s = rows[0];
+  const addrCol  = findCol(s, ['Address','Street Address','Street','Address Line 1','Addr']);
+  const firstCol = findCol(s, ['First Name','FirstName','First','first_name','Fname']);
+  const lastCol  = findCol(s, ['Last Name','LastName','Last','Surname','last_name','Lname']);
+  const nameCol  = findCol(s, ['Full Name','Name','Supporter Name']);
+  const cityCol  = findCol(s, ['City','Town','Municipality']);
+  const zipCol   = findCol(s, ['Zip','Zip Code','ZipCode','Postal Code','PostalCode']);
+  const reqCol   = findCol(s, ['Request Type','RequestType','Type','Request','request_type']);
+  const notesCol = findCol(s, ['Notes','Note','Field Notes','Comments','Comment']);
+  if (!addrCol) return [];
+  return rows.map(r => {
+    let firstName = firstCol ? String(r[firstCol] || '').trim() : '';
+    let lastName  = lastCol  ? String(r[lastCol]  || '').trim() : '';
+    if (!firstName && !lastName && nameCol) {
+      const p = String(r[nameCol] || '').trim().split(/\s+/);
+      firstName = p[0] || ''; lastName = p.slice(1).join(' ');
+    }
+    return {
+      name: [firstName, lastName].filter(Boolean).join(' '), firstName, lastName,
+      address:     String(r[addrCol]).trim(),
+      city:        cityCol  ? String(r[cityCol]  || '').trim() : '',
+      zip:         zipCol   ? String(r[zipCol]   || '').trim() : '',
+      requestType: reqCol   ? String(r[reqCol]   || '').trim() : '',
+      notes:       notesCol ? String(r[notesCol] || '').trim() : ''
+    };
+  }).filter(r => r.address.length > 2);
+}
+
+// ── Check Addresses (Tab 2) ───────────────────────────────────────────────────
+async function startCleanup() {
+  const tbody   = document.getElementById('cleanup-tbody');
+  const summary = document.getElementById('cr-summary');
+  const progW   = document.getElementById('progress-wrap');
+  const progF   = document.getElementById('progress-fill');
+  const progL   = document.getElementById('progress-label');
+
+  tbody.innerHTML = '';
+  document.getElementById('cr-footer').style.display = 'none';
+  cleanupRows = [];
+  progW.style.display = 'block';
+
+  const cache = loadCache();
+  let failed = 0;
+
+  for (let i = 0; i < parsedRecords.length; i++) {
+    progL.textContent = 'Geocoding ' + (i + 1) + ' of ' + parsedRecords.length + '…';
+    progF.style.width = ((i / parsedRecords.length) * 100) + '%';
+    const rec = parsedRecords[i];
+    const wasCached = !!cache[geoKey(rec)];
+    const loc = await geocode(rec, cache);
+    if (!loc) failed++;
+    cleanupRows.push({
+      record: rec, lat: loc?.lat, lon: loc?.lon,
+      displayName: loc?.displayName || '', importance: loc?.importance ?? null,
+      skip: false, manuallyPlaced: false
+    });
+    renderCleanupRow(i, cleanupRows[i]);
+    renderCleanupMarkers();
+    if (!wasCached) await sleep(1500);
+  }
+
+  saveCache(cache);
+  progW.style.display = 'none';
+  progF.style.width = '0';
+
+  const goodPts = cleanupRows.filter(r => r.lat);
+  if (goodPts.length) {
+    map.fitBounds(goodPts.map(r => [r.lat, r.lon]), { padding: [30, 30] });
+  }
+
+  const ok = cleanupRows.filter(r => r.lat != null).length;
+  summary.textContent = ok + ' geocoded · ' + failed + ' not found';
+  updateCleanupFooter();
+  setStatus('Geocoding complete. Review addresses, then click "Addresses Look Good" to proceed.');
+}
+
+function confBadge(row) {
+  if (row.manuallyPlaced) return '<span class="conf-badge conf-manual">Manual</span>';
+  if (row.lat == null)    return '<span class="conf-badge conf-fail">Not found</span>';
+  return '<span class="conf-badge conf-high">Good</span>';
+}
+
+function renderCleanupRow(i, row) {
+  const tbody = document.getElementById('cleanup-tbody');
+  let tr = document.getElementById('cr-row-' + i);
+  const failed = row.lat == null;
+  const icon = failed
+    ? '<span style="color:#e63946;font-size:0.88rem">&#10007;</span>'
+    : row.manuallyPlaced
+      ? '<span style="color:#457b9d;font-size:0.88rem">&#9654;</span>'
+      : '<span style="color:#2d6a4f;font-size:0.88rem">&#10003;</span>';
+  if (!tr) { tr = document.createElement('tr'); tr.id = 'cr-row-' + i; tbody.appendChild(tr); }
+  tr.className = row.skip ? 'row-skipped' : (failed ? 'row-fail' : '');
+  tr.innerHTML =
+    '<td style="text-align:center">' + icon + '</td>' +
+    '<td>' +
+      '<div class="cr-name">' + escXml(row.record.name || '—') + '</div>' +
+      '<input class="cr-addr-input" id="cr-addr-' + i + '" value="' + escXml(row.record.address) + '"' +
+        ' title="Click to edit, press Enter or click away to re-geocode"' +
+        ' onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.blur();}"' +
+        ' onblur="onAddrBlur(' + i + ',this)">' +
+      '<div class="cr-geocoded" title="' + escXml(row.displayName) + '">' + escXml(shortDN(row.displayName)) + '</div>' +
+    '</td>' +
+    '<td>' + confBadge(row) + '</td>' +
+    '<td><button class="cr-skip-btn' + (row.skip ? ' active' : '') + '" onclick="toggleSkip(' + i + ')">' +
+      (row.skip ? 'Restore' : 'Skip') + '</button></td>';
+}
+
+function shortDN(dn) {
+  if (!dn) return '';
+  return dn.split(',').map(s => s.trim()).slice(0, 3).join(', ');
+}
+
+async function onAddrBlur(i, input) {
+  const newAddr = input.value.trim();
+  if (!newAddr || newAddr === cleanupRows[i].record.address) return;
+  const tr = document.getElementById('cr-row-' + i);
+  if (tr) tr.cells[2].innerHTML = '<span class="conf-badge conf-spin">…</span>';
+  const fakeRec = Object.assign({}, cleanupRows[i].record, { address: newAddr });
+  const cache = loadCache();
+  delete cache[geoKey(fakeRec)];
+  const loc = await geocode(fakeRec, cache);
+  saveCache(cache);
+  cleanupRows[i].record = Object.assign({}, cleanupRows[i].record, { address: newAddr });
+  cleanupRows[i].manuallyPlaced = false;
+  if (loc) {
+    Object.assign(cleanupRows[i], { lat: loc.lat, lon: loc.lon, displayName: loc.displayName || '', importance: loc.importance ?? null });
+  } else {
+    Object.assign(cleanupRows[i], { lat: null, lon: null, displayName: '', importance: null });
+  }
+  renderCleanupRow(i, cleanupRows[i]);
+  renderCleanupMarkers();
+  updateCleanupFooter();
+}
+
+function toggleSkip(i) {
+  cleanupRows[i].skip = !cleanupRows[i].skip;
+  renderCleanupRow(i, cleanupRows[i]);
+  renderCleanupMarkers();
+  updateCleanupFooter();
+}
+
+function updateCleanupFooter() {
+  const active = cleanupRows.filter(r => !r.skip && r.lat != null).length;
+  const footer = document.getElementById('cr-footer');
+  if (active > 0) {
+    footer.style.display = 'flex';
+    document.getElementById('cr-footer-label').textContent =
+      active + ' address' + (active !== 1 ? 'es' : '') + ' ready to map.';
+  } else {
+    footer.style.display = 'none';
+  }
+}
+
+// Draggable cleanup markers
+function cleanupMarkerIcon(color) {
+  return L.divIcon({
+    className: '',
+    html: '<div style="background:' + color + ';border:2px solid #fff;border-radius:50%;width:14px;height:14px;box-shadow:0 1px 3px rgba(0,0,0,0.4)"></div>',
+    iconSize: [14, 14], iconAnchor: [7, 7]
+  });
+}
+
+function renderCleanupMarkers() {
+  markerLayer.clearLayers();
+  cleanupRows.forEach((row, i) => {
+    if (!row.lat || row.skip) return;
+    const isManual = row.manuallyPlaced;
+    const color = isManual ? '#457b9d' : '#2d6a4f';
+    const marker = L.marker([row.lat, row.lon], {
+      icon: cleanupMarkerIcon(color),
+      draggable: true
+    });
+    marker.on('dragend', function() {
+      const ll = this.getLatLng();
+      cleanupRows[i].lat = ll.lat;
+      cleanupRows[i].lon = ll.lng;
+      cleanupRows[i].manuallyPlaced = true;
+      cleanupRows[i].importance = 1.0;
+      cleanupRows[i].displayName = 'Manually placed';
+      this.setIcon(cleanupMarkerIcon('#457b9d'));
+      renderCleanupRow(i, cleanupRows[i]);
+      updateCleanupFooter();
+    });
+    marker.bindPopup('<b>' + escXml(row.record.name || '—') + '</b><br>' +
+      escXml(row.record.address) + '<br><small style="color:#888">Drag marker to correct position</small>');
+    marker.on('click', () => highlightCleanupRow(i));
+    marker.addTo(markerLayer);
+  });
+}
+
+function highlightCleanupRow(i) {
+  const tr = document.getElementById('cr-row-' + i);
+  if (!tr) return;
+  tr.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  tr.classList.add('row-highlight');
+  setTimeout(() => tr.classList.remove('row-highlight'), 1600);
+}
+
+function getConfirmedGeocoded() {
+  return cleanupRows.filter(r => !r.skip && r.lat != null)
+    .map(r => Object.assign({}, r.record, { lat: r.lat, lon: r.lon }));
+}
+
+function showConfirmedMarkers() {
+  markerLayer.clearLayers();
+  const pts = getConfirmedGeocoded();
+  pts.forEach(pt => {
+    L.circleMarker([pt.lat, pt.lon], {
+      radius: 7, fillColor: '#7aaa8a', color: '#fff', weight: 2, opacity: 1, fillOpacity: 0.75
+    })
+    .bindPopup('<b>' + escXml(pt.name || '—') + '</b><br>' + escXml(addrString(pt)))
+    .addTo(markerLayer);
+  });
+  if (pts.length) map.fitBounds(pts.map(p => [p.lat, p.lon]), { padding: [40, 40] });
+}
+
+function unlockMapping(mode) {
+  document.getElementById('tab-check').classList.add('done');
+  ['walking','driving'].forEach(id => {
+    document.getElementById('tab-' + id).classList.remove('locked');
+  });
+  goTab(mode);
+  setStatus('Addresses confirmed. Configure turfs and click "Cut Turfs".');
+}
+
+// ── Draw mode toggle ──────────────────────────────────────────────────────────
+function setDrawMode(mode, dm) {
+  MS[mode].drawMode = dm;
+  const p = mode[0];
+  document.getElementById(p + 'toggle-auto').classList.toggle('active', dm === 'auto');
+  document.getElementById(p + 'toggle-manual').classList.toggle('active', dm === 'manual');
+  document.getElementById(p + 'auto-opts').style.display   = dm === 'auto'   ? 'flex' : 'none';
+  document.getElementById(p + 'manual-opts').style.display = dm === 'manual' ? 'flex' : 'none';
+  document.getElementById(p + 'run-btn').textContent = dm === 'auto' ? 'Cut Turfs' : 'Start Drawing';
+}
+
+// ── Run modes ─────────────────────────────────────────────────────────────────
+async function runMode(mode) {
+  const p = mode[0];
+  const ms = MS[mode];
+  const btn = document.getElementById(p + 'run-btn');
+  btn.disabled = true;
+  ms.drawnItems.clearLayers();
+  document.getElementById('export-bar-' + mode).style.display = 'none';
+
+  const geocoded = getConfirmedGeocoded();
+  if (!geocoded.length) { setStatus('No confirmed addresses.'); btn.disabled = false; return; }
+
+  if (ms.drawMode === 'manual') {
+    ms.geoResults = geocoded.map((pt, i) => Object.assign({}, pt, { _idx: i }));
+    ms.unassigned = ms.geoResults.slice();
+    ms.manualTurfs = []; ms.osrmMatrix = null; ms.numTurfs = 0;
+    if (ms.geoResults.length > 1 && ms.geoResults.length <= 100) {
+      setStatus('Fetching ' + modeLabel(mode) + ' road distances…');
+      try { ms.osrmMatrix = await fetchOSRMMatrix(ms.geoResults, mode === 'driving' ? 'driving' : 'foot'); } catch {}
+    }
+    map.fitBounds(ms.geoResults.map(pt => [pt.lat, pt.lon]), { padding: [30, 30] });
+    renderManualMarkers(mode);
+    renderManualPanel(mode);
+    setStatus(ms.geoResults.length + ' addresses ready — draw polygons, then click Finalize.');
+    btn.disabled = false;
+    return;
+  }
+
+  const k = parseInt(document.getElementById(p + 'turf-count').value, 10) || 5;
+  await runWithGeocoded(mode, geocoded, k);
+  btn.disabled = false;
+}
+
+async function runWithGeocoded(mode, geocoded, k) {
+  const ms = MS[mode];
+  ms.geoResults = geocoded.map((pt, i) => Object.assign({}, pt, { _idx: i }));
+  ms.osrmMatrix = null;
+
+  if (ms.geoResults.length > 1 && ms.geoResults.length <= 100) {
+    setStatus('Fetching ' + modeLabel(mode) + ' road distances for ' + ms.geoResults.length + ' addresses…');
+    try {
+      ms.osrmMatrix = await fetchOSRMMatrix(ms.geoResults, mode === 'driving' ? 'driving' : 'foot');
+    } catch (e) {
+      setStatus('Road distances unavailable — using straight-line. (' + (e.message || 'timeout') + ')');
+    }
+  } else if (ms.geoResults.length > 100) {
+    setStatus('Over 100 addresses — using straight-line distances…');
+  }
+
+  const actualK = Math.min(k, ms.geoResults.length);
+  ms.geoAssign = ms.osrmMatrix
+    ? kmedoids(ms.geoResults, actualK, ms.osrmMatrix)
+    : kmeans(ms.geoResults, actualK);
+  ms.numTurfs = actualK;
+  buildTurfSequences(mode);
+  renderAllMarkers(mode);
+  map.fitBounds(ms.geoResults.map(pt => [pt.lat, pt.lon]), { padding: [30, 30] });
+
+  const p = mode[0];
+  if (!document.getElementById(p + 'vol-date').value)
+    document.getElementById(p + 'vol-date').value = new Date().toISOString().slice(0, 10);
+  updateTurfSelect(mode);
+  document.getElementById('export-bar-' + mode).style.display = 'flex';
+
+  setStatus(
+    geocoded.length + ' addresses → ' + actualK + ' turfs · ' + modeLabel(mode) +
+    (ms.osrmMatrix ? ' · Road-distance routing' : ' · Straight-line distances')
+  );
+}
+
+function updateTurfSelect(mode) {
+  const ms = MS[mode];
+  const p = mode[0];
+  const sel = document.getElementById(p + 'turf-select');
+  sel.innerHTML = '';
+  for (let t = 0; t < ms.numTurfs; t++) {
+    const opt = document.createElement('option');
+    opt.value = t;
+    opt.textContent = turfDN(ms, t) + ' (' + ms.turfSequences[t].length + ' addresses)';
+    sel.appendChild(opt);
+  }
+}
+
+// ── Clustering ────────────────────────────────────────────────────────────────
+function dist2(a, b) { const dl = a.lat - b.lat, dn = a.lon - b.lon; return dl*dl + dn*dn; }
+
+function kmedoids(pts, k, distMatrix, maxIter = 80) {
+  const n = pts.length;
+  function rd(i, j) { const d = distMatrix[i]?.[j]; return (d != null && isFinite(d)) ? d : Math.sqrt(dist2(pts[i], pts[j])) * 111000; }
+  const medoids = [Math.floor(Math.random() * n)];
+  while (medoids.length < k) {
+    const dists = Array.from({ length: n }, (_, i) => Math.min(...medoids.map(m => rd(i, m))));
+    const total = dists.reduce((a, b) => a + b, 0);
+    let r = Math.random() * total, chosen = n - 1;
+    for (let i = 0; i < n; i++) { r -= dists[i]; if (r <= 0) { chosen = i; break; } }
+    medoids.push(medoids.includes(chosen) ? (chosen + 1) % n : chosen);
+  }
+  let assign = new Array(n).fill(0);
+  for (let iter = 0; iter < maxIter; iter++) {
+    const next = Array.from({ length: n }, (_, i) => { let best = 0, bestD = Infinity; medoids.forEach((m, mi) => { const d = rd(i, m); if (d < bestD) { bestD = d; best = mi; } }); return best; });
+    if (next.every((a, i) => a === assign[i])) break;
+    assign = next;
+    for (let ci = 0; ci < k; ci++) {
+      const mem = assign.map((a, i) => a === ci ? i : -1).filter(i => i >= 0);
+      if (!mem.length) continue;
+      let best = mem[0], bestS = Infinity;
+      for (const c of mem) { const s = mem.reduce((x, j) => x + rd(c, j), 0); if (s < bestS) { bestS = s; best = c; } }
+      medoids[ci] = best;
+    }
+  }
+  const base = Math.floor(n / k), extra = n % k;
+  const quota = Array.from({ length: k }, (_, i) => base + (i < extra ? 1 : 0));
+  const counts = new Array(k).fill(0), balanced = new Array(n).fill(-1), pairs = [];
+  pts.forEach((_, pi) => medoids.forEach((m, ci) => pairs.push([rd(pi, m), pi, ci])));
+  pairs.sort((a, b) => a[0] - b[0]);
+  for (const [, pi, ci] of pairs) { if (balanced[pi] === -1 && counts[ci] < quota[ci]) { balanced[pi] = ci; counts[ci]++; } }
+  return balanced;
+}
+
+function kmeans(pts, k, maxIter = 150) {
+  const centroids = [Object.assign({}, pts[Math.floor(Math.random() * pts.length)])];
+  while (centroids.length < k) {
+    const dists = pts.map(p => Math.min(...centroids.map(c => dist2(p, c))));
+    const total = dists.reduce((a, b) => a + b, 0);
+    let r = Math.random() * total, chosen = pts[pts.length - 1];
+    for (let i = 0; i < pts.length; i++) { r -= dists[i]; if (r <= 0) { chosen = pts[i]; break; } }
+    centroids.push(Object.assign({}, chosen));
+  }
+  let assign = new Array(pts.length).fill(0);
+  for (let iter = 0; iter < maxIter; iter++) {
+    const next = pts.map(p => { let best = 0, bestD = Infinity; centroids.forEach((c, i) => { const d = dist2(p, c); if (d < bestD) { bestD = d; best = i; } }); return best; });
+    if (next.every((a, i) => a === assign[i])) break;
+    assign = next;
+    for (let i = 0; i < k; i++) {
+      const m = pts.filter((_, j) => assign[j] === i);
+      if (m.length) centroids[i] = { lat: m.reduce((s, p) => s + p.lat, 0) / m.length, lon: m.reduce((s, p) => s + p.lon, 0) / m.length };
+    }
+  }
+  const n = pts.length, base = Math.floor(n / k), extra = n % k;
+  const quota = Array.from({ length: k }, (_, i) => base + (i < extra ? 1 : 0));
+  const counts = new Array(k).fill(0), balanced = new Array(n).fill(-1), pairs = [];
+  pts.forEach((p, pi) => centroids.forEach((c, ci) => pairs.push([dist2(p, c), pi, ci])));
+  pairs.sort((a, b) => a[0] - b[0]);
+  for (const [, pi, ci] of pairs) { if (balanced[pi] === -1 && counts[ci] < quota[ci]) { balanced[pi] = ci; counts[ci]++; } }
+  return balanced;
+}
+
+function nearestNeighborSequence(ms, members) {
+  if (members.length <= 1) return members.map((m, i) => Object.assign({}, m, { stop: i + 1 }));
+  const n = members.length, visited = new Array(n).fill(false), order = [0];
+  visited[0] = true;
+  while (order.length < n) {
+    const cur = order[order.length - 1];
+    let nearest = -1, nearestD = Infinity;
+    for (let i = 0; i < n; i++) {
+      if (visited[i]) continue;
+      let d;
+      if (ms.osrmMatrix) {
+        const ai = members[cur]._idx, bi = members[i]._idx;
+        const od = (ai != null && bi != null) ? ms.osrmMatrix[ai]?.[bi] : null;
+        d = (od != null && isFinite(od)) ? od : dist2(members[cur], members[i]) * 1e8;
+      } else { d = dist2(members[cur], members[i]); }
+      if (d < nearestD) { nearestD = d; nearest = i; }
+    }
+    visited[nearest] = true; order.push(nearest);
+  }
+  return order.map((origIdx, stopIdx) => Object.assign({}, members[origIdx], { stop: stopIdx + 1 }));
+}
+
+function buildTurfSequences(mode) {
+  const ms = MS[mode];
+  ms.turfSequences = []; ms.turfNames = [];
+  for (let t = 0; t < ms.numTurfs; t++) {
+    ms.turfSequences.push(nearestNeighborSequence(ms, ms.geoResults.filter((_, i) => ms.geoAssign[i] === t)));
+    ms.turfNames.push('');
+  }
+}
+
+// ── Markers ───────────────────────────────────────────────────────────────────
+function numberedIcon(n, color) {
+  return L.divIcon({
+    className: '',
+    html: '<div style="background:' + color + ';color:#fff;border:2px solid #fff;border-radius:50%;width:30px;height:30px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,0.45);line-height:1">' + n + '</div>',
+    iconSize: [30, 30], iconAnchor: [15, 15]
+  });
+}
+
+function renderAllMarkers(mode) {
+  const ms = MS[mode];
+  markerLayer.clearLayers();
+  ms.geoResults.forEach((pt, i) => {
+    const t = ms.geoAssign[i];
+    const color = COLORS[t % COLORS.length];
+    L.circleMarker([pt.lat, pt.lon], { radius: 8, fillColor: color, color: '#fff', weight: 2, opacity: 1, fillOpacity: 0.88 })
+      .bindPopup(makeReassignPopup(mode, i))
+      .addTo(markerLayer);
+  });
+}
+
+function makeReassignPopup(mode, geoIdx) {
+  const ms = MS[mode];
+  const pt = ms.geoResults[geoIdx];
+  const opts = Array.from({ length: ms.numTurfs }, (_, t) =>
+    '<option value="' + t + '"' + (t === ms.geoAssign[geoIdx] ? ' selected' : '') + '>' + turfDN(ms, t) + '</option>'
+  ).join('');
+  return '<div class="reassign-popup">' +
+    '<b>' + escXml(pt.name || '—') + '</b><br>' +
+    '<span style="font-size:0.79rem">' + escXml(addrString(pt)) + '</span>' +
+    '<span class="rp-label">Move to turf:</span>' +
+    '<select onchange="reassignPoint(\'' + mode + '\',' + geoIdx + ',+this.value)">' + opts + '</select>' +
+    '</div>';
+}
+
+function reassignPoint(mode, geoIdx, newTurf) {
+  const ms = MS[mode];
+  ms.geoAssign[geoIdx] = newTurf;
+  buildTurfSequences(mode);
+  renderAllMarkers(mode);
+  updateTurfSelect(mode);
+  map.closePopup();
+}
+
+// ── Manual draw mode ──────────────────────────────────────────────────────────
+function pointInPolygon(lon, lat, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if (((yi > lat) !== (yj > lat)) && lon < (xj - xi) * (lat - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+function assignPolygon(ms, ring, turfIdx) {
+  const still = [];
+  for (const pt of ms.unassigned) {
+    if (pointInPolygon(pt.lon, pt.lat, ring)) ms.manualTurfs[turfIdx].members.push(pt);
+    else still.push(pt);
+  }
+  ms.unassigned = still;
+}
+
+function addManualTurf(mode) {
+  const ms = MS[mode];
+  if (!ms.geoResults.length) {
+    const geocoded = getConfirmedGeocoded();
+    ms.geoResults = geocoded.map((pt, i) => Object.assign({}, pt, { _idx: i }));
+    ms.unassigned = ms.geoResults.slice();
+    if (ms.geoResults.length > 1 && ms.geoResults.length <= 100) {
+      fetchOSRMMatrix(ms.geoResults, mode === 'driving' ? 'driving' : 'foot')
+        .then(m => { ms.osrmMatrix = m; }).catch(() => {});
+    }
+    renderManualMarkers(mode);
+    map.fitBounds(ms.geoResults.map(pt => [pt.lat, pt.lon]), { padding: [30, 30] });
+  }
+  ms.manualTurfs.push({ name: 'Turf ' + (ms.manualTurfs.length + 1), members: [] });
+  renderManualPanel(mode);
+  activateDrawFor(mode, ms.manualTurfs.length - 1);
+}
+
+function activateDrawFor(mode, turfIdx) {
+  const ms = MS[mode];
+  if (ms.drawHandler) { ms.drawHandler.disable(); ms.drawHandler = null; }
+  ms.activeDrawTurfIdx = turfIdx;
+  const color = COLORS[turfIdx % COLORS.length];
+  ms.drawHandler = new L.Draw.Polygon(map, {
+    shapeOptions: { color, weight: 2, fillColor: color, fillOpacity: 0.15 }
+  });
+  ms.drawHandler.enable();
+  document.getElementById('draw-instruction-text').textContent =
+    'Drawing ' + ms.manualTurfs[turfIdx].name + ': click to place points, double-click to finish.';
+  document.getElementById('draw-instruction').style.display = 'flex';
+  renderManualPanel(mode);
+}
+
+function cancelDraw() {
+  const mode = currentTab;
+  if (!['walking','driving'].includes(mode)) return;
+  const ms = MS[mode];
+  if (ms.drawHandler) { ms.drawHandler.disable(); ms.drawHandler = null; }
+  ms.activeDrawTurfIdx = -1;
+  document.getElementById('draw-instruction').style.display = 'none';
+  renderManualPanel(mode);
+}
+
+function removeManualTurf(mode, i) {
+  const ms = MS[mode];
+  ms.unassigned = ms.unassigned.concat(ms.manualTurfs[i].members);
+  ms.manualTurfs.splice(i, 1);
+  ms.manualTurfs.forEach((t, idx) => { if (/^Turf \d+$/.test(t.name)) t.name = 'Turf ' + (idx + 1); });
+  renderManualMarkers(mode);
+  renderManualPanel(mode);
+}
+
+function setManualTurfName(mode, i, val) { MS[mode].manualTurfs[i].name = val; }
+
+function renderManualPanel(mode) {
+  const ms = MS[mode];
+  const p = mode[0];
+  const listEl = document.getElementById(p + 'manual-list');
+  const countEl = document.getElementById(p + 'unassigned-count');
+  countEl.textContent = ms.unassigned.length + ' unassigned';
+
+  if (!ms.manualTurfs.length) {
+    listEl.innerHTML = '<span style="font-size:0.75rem;color:#aaa;font-style:italic">No turfs yet</span>';
+    return;
+  }
+  listEl.innerHTML = ms.manualTurfs.map((t, i) => {
+    const color = COLORS[i % COLORS.length];
+    const isActive = ms.activeDrawTurfIdx === i;
+    return '<div class="mtp" id="mtp-' + mode + '-' + i + '">' +
+      '<span class="mtp-swatch" style="background:' + color + '"></span>' +
+      '<input class="mtp-name" value="' + escXml(t.name) + '" onchange="setManualTurfName(\'' + mode + '\',' + i + ',this.value)" title="Rename turf">' +
+      '<span class="mtp-count">' + t.members.length + '</span>' +
+      '<button class="mtp-draw' + (isActive ? ' active' : '') + '" onclick="activateDrawFor(\'' + mode + '\',' + i + ')">Draw</button>' +
+      '<button class="mtp-del" onclick="removeManualTurf(\'' + mode + '\',' + i + ')">&#10007;</button>' +
+      '</div>';
+  }).join('');
+}
+
+function renderManualMarkers(mode) {
+  const ms = MS[mode];
+  markerLayer.clearLayers();
+  ms.unassigned.forEach(pt => {
+    L.circleMarker([pt.lat, pt.lon], { radius: 6, fillColor: '#aaa', color: '#fff', weight: 2, opacity: 1, fillOpacity: 0.6 })
+      .bindPopup('<b>' + escXml(pt.name || '—') + '</b><br>' + escXml(addrString(pt)) + '<br><em style="color:#aaa">Unassigned</em>')
+      .addTo(markerLayer);
+  });
+  ms.manualTurfs.forEach((turf, ti) => {
+    const color = COLORS[ti % COLORS.length];
+    turf.members.forEach(pt => {
+      L.circleMarker([pt.lat, pt.lon], { radius: 8, fillColor: color, color: '#fff', weight: 2, opacity: 1, fillOpacity: 0.88 })
+        .bindPopup('<b>' + escXml(pt.name || '—') + '</b><br>' + escXml(addrString(pt)) + '<br><em style="color:' + color + '">' + escXml(turf.name) + '</em>')
+        .addTo(markerLayer);
+    });
+  });
+}
+
+function finalizeManualTurfs(mode) {
+  const ms = MS[mode];
+  const active = ms.manualTurfs.filter(t => t.members.length > 0);
+  if (!active.length) { alert('Draw at least one turf with addresses before finalizing.'); return; }
+  ms.numTurfs = active.length;
+  ms.turfNames = active.map(t => t.name);
+  ms.turfSequences = active.map(t => nearestNeighborSequence(ms, t.members.slice()));
+  ms.geoResults = []; ms.geoAssign = [];
+  active.forEach((t, ti) => { t.members.forEach(pt => { ms.geoResults.push(pt); ms.geoAssign.push(ti); }); });
+  renderAllMarkers(mode);
+  const p = mode[0];
+  if (!document.getElementById(p + 'vol-date').value)
+    document.getElementById(p + 'vol-date').value = new Date().toISOString().slice(0, 10);
+  updateTurfSelect(mode);
+  document.getElementById('export-bar-' + mode).style.display = 'flex';
+  setStatus(ms.geoResults.length + ' addresses finalized into ' + ms.numTurfs + ' turfs · ' + modeLabel(mode));
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function setStatus(msg) { document.getElementById('status-bar').textContent = msg; }
+function modeLabel(mode) { return mode === 'driving' ? 'Yard Signs' : 'Door Knocking'; }
+function turfDN(ms, t) { return (ms.turfNames[t] && ms.turfNames[t].trim()) ? ms.turfNames[t] : 'Turf ' + (t + 1); }
+function addrString(m) { return [m.address, m.city, m.zip].filter(Boolean).join(', '); }
+function escXml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function download(filename, mimeType, content) {
+  const blob = new Blob([content], { type: mimeType });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = filename; a.click(); URL.revokeObjectURL(a.href);
+}
+function exportDate(mode) {
+  const p = mode[0];
+  const v = document.getElementById(p + 'vol-date').value;
+  if (!v) return new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const [y, mo, da] = v.split('-');
+  return new Date(+y, +mo - 1, +da).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+// ── Excel export ──────────────────────────────────────────────────────────────
+function exportExcel(mode) {
+  const ms = MS[mode];
+  const date = exportDate(mode), modeStr = modeLabel(mode), wb = XLSX.utils.book_new();
+  for (let t = 0; t < ms.numTurfs; t++) {
+    const members = ms.turfSequences[t]; if (!members.length) continue;
+    const label = turfDN(ms, t);
+    const dataRows = members.map(m => [m.stop, m.firstName || '', m.lastName || '', addrString(m), m.requestType || '', m.notes || '', '']);
+    const aoa = [
+      [label,'','','','','',''],
+      ['Mode:', modeStr,'','','Date:', date,''],
+      ['','','','','','',''],
+      ['Stop #','First Name','Last Name','Address','Request Type','Notes','Completed'],
+      ...dataRows
+    ];
+    if (members.length > 15) aoa.splice(4, 0, ['⚠ ' + members.length + ' stops — may exceed one printed page','','','','','','']);
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [8, 14, 16, 40, 16, 32, 10].map(w => ({ wch: w }));
+    XLSX.utils.book_append_sheet(wb, ws, label.slice(0, 31));
+  }
+  XLSX.writeFile(wb, 'turfcutter-turfs.xlsx');
+}
+
+// ── KML export ────────────────────────────────────────────────────────────────
+function exportKML(mode) {
+  const ms = MS[mode];
+  const p = mode[0];
+  const t = parseInt(document.getElementById(p + 'turf-select').value, 10);
+  const members = ms.turfSequences[t], color = COLORS[t % COLORS.length];
+  const r = color.slice(1,3), g = color.slice(3,5), b = color.slice(5,7), kmlColor = 'ff' + b + g + r;
+  const modeStr = modeLabel(mode), label = turfDN(ms, t);
+  const placemarks = members.map(m =>
+    '\n    <Placemark>' +
+    '<name>Stop ' + m.stop + ' — ' + escXml(addrString(m)) + '</name>' +
+    '<description>' + escXml(m.name || 'Supporter') + (m.requestType ? ' (' + escXml(m.requestType) + ')' : '') + (m.notes ? '\n' + escXml(m.notes) : '') + '\nMode: ' + modeStr + '</description>' +
+    '<Style><IconStyle><color>' + kmlColor + '</color><scale>1.1</scale></IconStyle></Style>' +
+    '<Point><coordinates>' + m.lon + ',' + m.lat + ',0</coordinates></Point>' +
+    '</Placemark>'
+  ).join('');
+  download(label.replace(/\s+/g, '-') + '.kml', 'application/vnd.google-earth.kml+xml',
+    '<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>' + escXml(label) + ' — ' + modeStr + '</name><Folder><name>' + escXml(label) + '</name>' + placemarks + '</Folder></Document></kml>');
+}
+
+// ── PDF export ────────────────────────────────────────────────────────────────
+async function exportPDF(mode) {
+  const ms = MS[mode];
+  const p = mode[0];
+  const t = parseInt(document.getElementById(p + 'turf-select').value, 10);
+  const members = ms.turfSequences[t], color = COLORS[t % COLORS.length];
+  const date = exportDate(mode), modeStr = modeLabel(mode), label = turfDN(ms, t);
+  const title = label + ' — ' + date + ' — ' + modeStr;
+  const pdfBtn = document.getElementById(p + 'pdf-btn');
+  pdfBtn.disabled = true; pdfBtn.textContent = 'Capturing…';
+  try {
+    markerLayer.clearLayers();
+    members.forEach(m => L.marker([m.lat, m.lon], { icon: numberedIcon(m.stop, color) }).addTo(markerLayer));
+    map.fitBounds(members.map(m => [m.lat, m.lon]), { padding: [50, 50] });
+    await sleep(950);
+    const canvas = await html2canvas(document.getElementById('map'), { useCORS: true, allowTaint: false, logging: false, scale: 1.5 });
+    const imgData = canvas.toDataURL('image/png');
+    renderAllMarkers(mode);
+    map.fitBounds(ms.geoResults.map(pt => [pt.lat, pt.lon]), { padding: [30, 30] });
+    const hasReq = members.some(m => m.requestType);
+    const tableRows = members.map(m =>
+      '<tr><td class="stop-col">' + m.stop + '</td><td>' + escXml(m.name || '—') + '</td><td>' + escXml(addrString(m)) + '</td>' +
+      (hasReq ? '<td>' + escXml(m.requestType || '') + '</td>' : '') +
+      '<td class="notes-col">' + escXml(m.notes || '') + '</td></tr>'
+    ).join('');
+    const html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>' + escXml(title) + '</title><style>' +
+      '@page{size:letter portrait;margin:0.5in}*{box-sizing:border-box;margin:0;padding:0}' +
+      'body{font-family:Arial,Helvetica,sans-serif;font-size:13pt;color:#111}' +
+      'h1{font-size:14pt;font-weight:bold;padding-bottom:7px;margin-bottom:10px;border-bottom:3px solid ' + color + '}' +
+      '.map-block{width:100%;margin-bottom:14px}.map-block img{width:100%;height:auto;max-height:56vh;object-fit:contain;border:1px solid #bbb;display:block}' +
+      'table{width:100%;border-collapse:collapse;font-size:12pt}' +
+      'thead tr th{background:' + color + ';color:#fff;padding:7px 10px;text-align:left;font-weight:bold}' +
+      'td{padding:6px 10px;border-bottom:1px solid #ddd;vertical-align:top}tr:nth-child(even)td{background:#f7f7f7}' +
+      '.stop-col{font-weight:bold;text-align:center;width:42px}.notes-col{font-size:10.5pt;color:#555;font-style:italic}' +
+      '@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}' +
+      '</style></head><body>' +
+      '<h1>' + escXml(title) + '</h1>' +
+      '<div class="map-block"><img src="' + imgData + '" alt="' + escXml(label) + ' map"></div>' +
+      '<table><thead><tr><th>Stop</th><th>Name</th><th>Address</th>' + (hasReq ? '<th>Request</th>' : '') + '<th>Notes</th></tr></thead><tbody>' + tableRows + '</tbody></table>' +
+      '<script>window.addEventListener(\'load\',()=>{setTimeout(()=>window.print(),500);});<\/script>' +
+      '</body></html>';
+    const win = window.open('', '_blank');
+    if (!win) { alert('Pop-ups are blocked — allow pop-ups for this page to export PDFs.'); return; }
+    win.document.write(html); win.document.close();
+  } finally { pdfBtn.disabled = false; pdfBtn.textContent = 'PDF Map'; }
+}
+</script>
+</body>
+</html>

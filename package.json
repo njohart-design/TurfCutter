@@ -1,0 +1,11 @@
+{
+  "name": "turfcutter",
+  "version": "1.0.0",
+  "description": "Campaign canvassing turf builder for Oregon",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
