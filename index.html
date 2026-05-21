@@ -530,11 +530,26 @@ function loadCache() {
 }
 function saveCache(c) { try { localStorage.setItem(GEO_CACHE_KEY, JSON.stringify(c)); } catch {} }
 function geoKey(rec) { return [rec.address, rec.city, rec.zip].filter(Boolean).join('|'); }
+// Strip unit/apartment designators before sending to Nominatim — Nominatim often
+// fails to match addresses that include unit info (Apt, Unit, Suite, #).
+// The original address is preserved everywhere else (display, exports, cache key).
+function stripUnit(addr) {
+  return addr
+    // comma + keyword (Apt/Unit/Suite/Ste) + optional # + unit value
+    .replace(/,\s*(?:apt|apartment|unit|suite|ste)\.?\s*#?\s*\S+.*/gi, '')
+    // space + keyword followed by a digit or # (ensures it's a unit, not a street name)
+    .replace(/\s+(?:apt|apartment|unit|suite|ste)\.?\s+#?\d+\S*.*/gi, '')
+    // comma or space + # + digit (e.g. " #4", ", #4")
+    .replace(/[,\s]+#\s*\d+\S*.*/g, '')
+    // trailing comma + optional # + digit (e.g. ", 4", ", 4B")
+    .replace(/,\s*#?\d+\w*\s*$/, '')
+    .trim();
+}
 async function geocode(rec, cache) {
   const key = geoKey(rec);
   if (cache[key]) return cache[key];
   const params = new URLSearchParams({
-    street: rec.address, state: 'Oregon', country: 'US',
+    street: stripUnit(rec.address), state: 'Oregon', country: 'US',
     format: 'json', limit: '1', bounded: '1',
     viewbox: '-124.703,46.292,-116.463,41.992'
   });
