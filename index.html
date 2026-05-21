@@ -544,13 +544,9 @@ async function geocodeCensus(rec) {
   const street = stripUnit(rec.address);
   const city = rec.city || 'Medford';
   const statePart = rec.zip ? `OR ${rec.zip}` : 'OR';
-  const params = new URLSearchParams({
-    address: `${street}, ${city}, ${statePart}`,
-    benchmark: 'Public_AR_Current',
-    format: 'json'
-  });
+  const params = new URLSearchParams({ address: `${street}, ${city}, ${statePart}` });
   try {
-    const r = await fetch('https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?' + params);
+    const r = await fetch('/geocode?' + params);
     const data = await r.json();
     const m = data?.result?.addressMatches;
     if (m && m.length) {
