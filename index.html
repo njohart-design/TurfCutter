@@ -530,24 +530,37 @@ function loadCache() {
 }
 function saveCache(c) { try { localStorage.setItem(GEO_CACHE_KEY, JSON.stringify(c)); } catch {} }
 function geoKey(rec) { return [rec.address, rec.city, rec.zip].filter(Boolean).join('|'); }
-// Strip unit/apartment designators before sending to Nominatim — Nominatim often
-// fails to match addresses that include unit info (Apt, Unit, Suite, #).
-// The original address is preserved everywhere else (display, exports, cache key).
+// Strip unit/apt designators before sending to either geocoder.
+// Original address is preserved in cache key, display, and all exports.
 function stripUnit(addr) {
   return addr
-    // comma + keyword (Apt/Unit/Suite/Ste) + optional # + unit value
     .replace(/,\s*(?:apt|apartment|unit|suite|ste)\.?\s*#?\s*\S+.*/gi, '')
-    // space + keyword followed by a digit or # (ensures it's a unit, not a street name)
     .replace(/\s+(?:apt|apartment|unit|suite|ste)\.?\s+#?\d+\S*.*/gi, '')
-    // comma or space + # + digit (e.g. " #4", ", #4")
     .replace(/[,\s]+#\s*\d+\S*.*/g, '')
-    // trailing comma + optional # + digit (e.g. ", 4", ", 4B")
     .replace(/,\s*#?\d+\w*\s*$/, '')
     .trim();
 }
-async function geocode(rec, cache) {
-  const key = geoKey(rec);
-  if (cache[key]) return cache[key];
+async function geocodeCensus(rec) {
+  const street = stripUnit(rec.address);
+  const city = rec.city || 'Medford';
+  const statePart = rec.zip ? `OR ${rec.zip}` : 'OR';
+  const params = new URLSearchParams({
+    address: `${street}, ${city}, ${statePart}`,
+    benchmark: 'Public_AR_Current',
+    format: 'json'
+  });
+  try {
+    const r = await fetch('https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?' + params);
+    const data = await r.json();
+    const m = data?.result?.addressMatches;
+    if (m && m.length) {
+      return { lat: m[0].coordinates.y, lon: m[0].coordinates.x,
+               displayName: m[0].matchedAddress || '', importance: 1 };
+    }
+  } catch {}
+  return null;
+}
+async function geocodeNominatim(rec) {
   const params = new URLSearchParams({
     street: stripUnit(rec.address), state: 'Oregon', country: 'US',
     format: 'json', limit: '1', bounded: '1',
@@ -560,13 +573,22 @@ async function geocode(rec, cache) {
       { headers: { 'Accept-Language': 'en-US,en', 'User-Agent': 'TurfCutter/1.0 (turfcutter-app; contact njohart@gmail.com)' } });
     const data = await r.json();
     if (data.length) {
-      const result = { lat: +data[0].lat, lon: +data[0].lon,
-                       displayName: data[0].display_name || '', importance: data[0].importance || 0 };
-      cache[key] = result;
-      return result;
+      return { lat: +data[0].lat, lon: +data[0].lon,
+               displayName: data[0].display_name || '', importance: data[0].importance || 0 };
     }
   } catch {}
   return null;
+}
+async function geocode(rec, cache) {
+  const key = geoKey(rec);
+  if (cache[key]) return cache[key];
+  let result = await geocodeCensus(rec);
+  if (!result) {
+    await sleep(1100); // Nominatim ToS: max 1 req/sec
+    result = await geocodeNominatim(rec);
+  }
+  if (result) cache[key] = result;
+  return result || null;
 }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -663,7 +685,6 @@ async function startCleanup() {
     });
     renderCleanupRow(i, cleanupRows[i]);
     renderCleanupMarkers();
-    if (!wasCached) await sleep(1500);
   }
 
   saveCache(cache);
